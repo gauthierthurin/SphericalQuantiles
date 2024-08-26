@@ -12,9 +12,13 @@ The file functions.py contains the required functions.
 Each notebook contains codes for one of the figures in the paper, as follows. 
 
 Tuto : figure 1 
+
 VolumesRegion : figure 2 
+
 OtherQuantiles : figure 3 
+
 RegVsUnreg : figures 4,5
+
 Classif : figures 6,7
 
 
