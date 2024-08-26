@@ -1,5 +1,6 @@
 # IntegratedQuantiles
-Codes used for the figures of the paper **Monge-Kantorovich quantiles for spherical data**, currently available on  
+Codes used for the figures of the paper **REGULARIZED ESTIMATION OF MONGE-KANTOROVICH QUANTILES
+FOR SPHERICAL DATA**, currently available on  
 
 https://arxiv.org/pdf/2407.02085
 
