@@ -4,7 +4,6 @@ import pyshtools as pysh
 #https://nbviewer.org/github/SHTOOLS/SHTOOLS/blob/master/examples/notebooks/grids-and-coefficients.ipynb
 import numpy as np 
 import matplotlib.pyplot as plt 
-import sphericart as sc 
 from time import time 
 import ot
 
@@ -13,9 +12,9 @@ from geomstats.learning.geometric_median import GeometricMedian
 from geomstats.geometry.hypersphere import Hypersphere
 import geomstats.visualization as visualization
 
-#############################################################################
+##########################################################################################################################################################
 # Basic functions 
-#############################################################################
+##########################################################################################################################################################
 
 def cartesian2polar(xyz):
     '''
@@ -126,9 +125,45 @@ def rotateData(data,MeanData):
     Newdata = np.array(Newdata)
     return(Newdata)
 
-#############################################################################
+def rotateDataBack(rotateddata,k):
+    Newdata = []
+    for x in rotateddata:
+        Newdata.append( RodriguesRot(x,-k,np.pi) )
+    Newdata = np.array(Newdata)
+    return(Newdata)
+
+def contour_unif_rotated(MeanData,tau,size):
+    k = MeanData+[0,0,1]
+    k = k/np.linalg.norm(k)
+    contourU = rotateDataBack(contour_unif(tau,size=size),k)
+    return(contourU)
+
+def signcurve_unif_rotated(MeanData,LON,size):
+    k = MeanData+[0,0,1]
+    k = k/np.linalg.norm(k)
+    scU = rotateDataBack(signcurve_unif(LON,size=size),k)
+    return(scU)
+
+from scipy.stats import vonmises_fisher # One-dimensional vMF on the circle
+def sampleTangentvMF(n_samples):
+    m1 = np.array([0,0,1])
+    V = np.random.beta(1,8,size=n_samples)
+    Z = 2*V -1 
+    S = np.zeros((n_samples,3))
+    S[:,0:2] = vonmises_fisher(mu=np.array([1,0]),kappa=15).rvs(n_samples)
+    data1 = Z.reshape(n_samples,1)*m1 + np.sqrt(1-Z**2).reshape(n_samples,1)*S
+
+    v = np.array([0.5,1,0.3])
+    v = v / np.linalg.norm(v)
+    data1 = rotateData(data1,v)
+
+    return(data1)
+
+
+
+##########################################################################################################################################################
 # Functions to solve the continuous OT problem via spherical harmonics coefficients
-#############################################################################
+##########################################################################################################################################################
 
 def weights_W(coeffs,s=1):
     '''
@@ -192,11 +227,22 @@ def cost_fft2(grid,y):
     C = 0.5*np.arccos(scal_prod_matrix)**2
     return(C)
 
-def Robbins_Monro_Algo(Y, eps=0.1, gamma= 1, c = 3/4, epoch = 1,l_max=30): 
+def Robbins_Monro_Algo_withDivergence(Y, eps=0.1, gamma= 1, c = 3/4, epoch = 1,l_max=30): 
     '''
-    - grid_x = a SHGrid object. It is the initialisation for the function u(x).
+    Computes our Robbins Monro algorithm, as well as Sinkhorn divergence iteratively. 
+    
+    Parameters: 
     - Y = sample from nu, in cartesian coordinates, of size (n,3) for n=number of samples, in dimension 3.  
+    - eps>0 is the regularization parameter
+    - gamma and c are parameters of the step sizes for stochastic gradient descent 
+    - epoch = determines the number of iterations, that is n * epoch. 
+    - l_max = determines number of parameters for spherical harmonics expansion, that will be l_max**2. 
+
+    Returns: 
+    - Estimation of regularized semi-dual potential (spherical harmonics object)
+    - Approximation of Wasserstein distance along iterations (an array of values)
     '''
+
     n = Y.shape[0]
     n_iter = n*epoch
     # Tirage des Y le long des itérations
@@ -253,10 +299,19 @@ def Robbins_Monro_Algo(Y, eps=0.1, gamma= 1, c = 3/4, epoch = 1,l_max=30):
     
 
 
-def Robbins_Monro_Algo_faster(Y, eps=0.1, gamma= 1, c = 3/4, epoch = 1,l_max=30):
+def Robbins_Monro_Algo(Y, eps=0.1, gamma= 1, c = 3/4, epoch = 1,l_max=30):
     '''
-    - grid_x = a SHGrid object. It is the initialisation for the function u(x).
+        Computes our Robbins Monro algorithm. 
+    
+    Parameters: 
     - Y = sample from nu, in cartesian coordinates, of size (n,3) for n=number of samples, in dimension 3.  
+    - eps>0 is the regularization parameter
+    - gamma and c are parameters of the step sizes for stochastic gradient descent 
+    - epoch = determines the number of iterations, that is n * epoch. 
+    - l_max = determines number of parameters for spherical harmonics expansion, that will be l_max**2. 
+
+    Returns: 
+    - Estimation of regularized semi-dual potential (spherical harmonics object)
     '''
     n = Y.shape[0]
     n_iter = n*epoch
@@ -293,9 +348,9 @@ def Robbins_Monro_Algo_faster(Y, eps=0.1, gamma= 1, c = 3/4, epoch = 1,l_max=30)
 
     
 
-#############################################################################
+#########################################################################################################################################
 # Functions for the entropic maps for F and Q 
-#############################################################################
+########################################################################################################################################
 
 def ddprime(grid,y):
     '''
@@ -356,68 +411,24 @@ def Fentropic2(y,u,eps):
     return(Fy)
 
 
+def scale_curve(u,rayons,F_thetaM,eps):
+    ''' naive implementation of volumes of quantile regions by way of average of samples '''
+    nR = len(rayons)
+    vol = -np.ones(nR)
+    for c in range(nR):
+        tau = rayons[c]
 
+        nb = 2000
+        grid_3D = np.random.normal(size=(nb,3))
+        grid_3D = grid_3D / np.linalg.norm(grid_3D,axis=1).reshape(nb,1)
 
-# functions built from the spherical harmonic coefficients of the first Kantorovich potential, to retrieve u as a function or the quantile map Q.
+        indic = -np.ones(grid_3D.shape[0])
+        for i,x in enumerate(grid_3D):
+            indic[i] = 1*(Fentropic2(x,u,eps)@F_thetaM >= 1-2*tau)
 
-def u_serie(points,u):
-    ''' 
-    Returns the spherical fourier serie of u for any points.
-    - u shall be a SHGrid object giving u(x_i) for any x_i in a uniform grid on the 2-sphere.
-    - points in 3D coordinates
-    '''
-    sh = sc.SphericalHarmonics(l_max=u.lmax, normalized=False)
-    sh_values, sh_grads = sh.compute_with_gradients(points)
-    fft_u = u.expand(normalization="ortho",csphase=1).to_array()
-    
-    res_u = []
-    for i in range(sh_values.shape[0]):
-        #if ((i % 1000)==0):
-        #    print(i,np.round((time()-t0)/60,2),"minutes")
-        Phi_i = sh_values[i] # take the spherical harmonics in R^3 for x_i
-        uxi = 0
-        for l in range(u.lmax+1):
-            for m in range(u.lmax+1): # for all \m\>0,
-                uxi = uxi + fft_u[0,l,m] * Phi_i[l*(l+1)+m] #m>0,
-                uxi = uxi + fft_u[1,l,m] * Phi_i[l*(l+1)-m] #m<0,
-        #uxi = uxi
-        res_u.append(uxi)
-    res_u = np.array(res_u)
-    return(res_u)
+        vol[c] = np.mean(indic)
+    return(vol)
 
-def Qentropic(points,u):
-    '''
-    - points in 3D coordinates
-    - u the Kantorovich potential of class SHgrid
-    Returns the image of points from the entropic map, calculated by explicit gradients of spherical harmonics.
-    '''
-    sh = sc.SphericalHarmonics(l_max=u.lmax, normalized=False)
-    sh_values, sh_grads = sh.compute_with_gradients(points)
-    fft_u = u.expand(normalization="ortho",csphase=1).to_array()
-
-    res = []
-    for i in range(sh_grads.shape[0]):
-        #if ((i % 1000)==0):
-        #    print(i,np.round((time()-t0)/60,2),"minutes")
-        DPhi_i = sh_grads[i] # gradients of spheric harmonics, shape (3,(lmax+1)**2)
-        # Step 1) euclidean gradient of u in R^3
-        grad = np.zeros(3) 
-        for l in range(u.lmax+1):
-            for m in range(u.lmax+1): # for all \m\>0,
-                grad = grad + fft_u[0,l,m] * DPhi_i[:,l*(l+1)+m] #m>0,
-                grad = grad + fft_u[1,l,m] * DPhi_i[:,l*(l+1)-m] #m<0
-
-        # Step 2) Riemannian gradient of u through orthogonal projection onto the tangent space at xi. 
-        xi = points[i]
-        XXT = np.matmul( xi.reshape(3,1), xi.reshape(1,3))
-        Riemangrad = (np.eye(3) - XXT) @ grad
-        # Step 3) Exponential map, from the tangent space to the sphere 
-        norm = np.linalg.norm(Riemangrad)
-        Qxi = np.cos(norm) * xi - np.sin(norm)* Riemangrad/norm
-        res.append(Qxi)
-
-    res = np.array(res)
-    return(res)
 
 def QentropicBP_pts(points,u,data,eps):
     '''
@@ -450,7 +461,7 @@ def QentropicBP2(x,data,eps,u_ce):
     cost_matrix = 0.5*np.arccos( scal_prod_matrix )**2
     dd_prime_x = - np.arccos(scal_prod_matrix) / np.sqrt( 1 - scal_prod_matrix**2 )
 
-    #argD = np.mean( np.exp((u.to_array() - cost_fft2(u,x) )/eps) ) 
+
     arg = ( u_ce - cost_matrix )/eps 
     M = np.max(arg) #to avoid computational issues
     g_eps = np.exp( arg - M )/np.exp(-M)
@@ -467,48 +478,6 @@ def QentropicBP2(x,data,eps,u_ce):
     Qx = np.cos(norm) * x - np.sin(norm)* Riemangrad/norm
 
     return(Qx)
-
-
-#############################################################################
-# Reference contours are contours of fixed latitude, oriented towards F_thetaM
-#############################################################################
-def rotateDataBack(rotateddata,k):
-    Newdata = []
-    for x in rotateddata:
-        Newdata.append( RodriguesRot(x,-k,np.pi) )
-    Newdata = np.array(Newdata)
-    return(Newdata)
-
-def contour_unif_rotated(MeanData,tau,size):
-    k = MeanData+[0,0,1]
-    k = k/np.linalg.norm(k)
-    contourU = rotateDataBack(contour_unif(tau,size=size),k)
-    return(contourU)
-
-def signcurve_unif_rotated(MeanData,LON,size):
-    k = MeanData+[0,0,1]
-    k = k/np.linalg.norm(k)
-    scU = rotateDataBack(signcurve_unif(LON,size=size),k)
-    return(scU)
-
-
-def scale_curve(u,rayons,F_thetaM,eps):
-    ''' naive implementation of the volumes by way of average of samples '''
-    nR = len(rayons)
-    vol = -np.ones(nR)
-    for c in range(nR):
-        tau = rayons[c]
-
-        nb = 2000
-        grid_3D = np.random.normal(size=(nb,3))
-        grid_3D = grid_3D / np.linalg.norm(grid_3D,axis=1).reshape(nb,1)
-
-        indic = -np.ones(grid_3D.shape[0])
-        for i,x in enumerate(grid_3D):
-            indic[i] = 1*(Fentropic2(x,u,eps)@F_thetaM >= 1-2*tau)
-
-        vol[c] = np.mean(indic)
-    return(vol)
 
 
 
